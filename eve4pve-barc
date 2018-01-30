@@ -61,7 +61,8 @@ Usage:
     $PROGNAME version
  
     $PROGNAME create   --vmid=<string> --label=<string> --path=<string> --keep=<integer>
-                          --script=<string> --mail=<string> --unprotect-snap --syslog 
+                          --script=<string> --mail=<string> --unprotect-snap --syslog
+						  --compress
     $PROGNAME destroy  --vmid=<string> --label=<string> --path=<string> 
     $PROGNAME enable   --vmid=<string> --label=<string> --path=<string> 
     $PROGNAME disable  --vmid=<string> --label=<string> --path=<string> 
@@ -100,6 +101,7 @@ Options:
     --script             Use specified hook script
                          Es. /usr/share/doc/$PROGNAME/examples/script-hook.sh
     --syslog             Write messages into the system log
+	--compress			 Compress backup image using lz4 (package liblz4-tool must be installed)
     --mail               Email addresses send log backup, comma separated (es. info@domain.ltd,info1@domain.ltd)
     --unprotect-snap     Disable protection snapshot, default is protected.
                          In Proxmox VE 'protected snapshot' cause problem in remove VM/CT see documentation.
@@ -816,7 +818,7 @@ function restore(){
 
         [ -z "$timestamp" ] && exit 1
 
-        #list all ppols
+        #list all pools
         pools=($(rados lspools | awk '{printf "%s %s\n",$1,$1}'))
 
         #select timestamp
@@ -849,19 +851,27 @@ function restore(){
         call_hook_script "restore-job-start" "-" "-"
 
         log info "Start restore $(date "+%F %T")"
-
-        local backup=''
+		        local backup=''
         for backup in $path_backup/*$image*; do
             if [[ $backup == *".img" ]]; then
                 #initial import 
-                log info "Inital import $(basename "$backup")"                
+                log info "Initial import $(basename "$backup")"                
                 do_run "rbd import --image-format 2 '$backup' $pool_name/$name_import"
 
-                #create initlal snap name
+                #create initial snap name
                 local timestamp_snap; timestamp_snap=$(basename "$backup" | awk '{print substr($1,1,12)}')
                 local snap_name_restore="$snap_name_prefix$timestamp_snap"
                 do_run "rbd snap create $pool_name/$name_import@$snap_name_restore"
-            
+            elif [[ $backup == *".lz4" ]]; then
+                if [[ -z $(which lz4) ]]; then log error "--compress called but lz4 compressor is not installed!"; exit 1; fi
+				#initial import 
+                log info "Initial import $(basename "$backup")"                
+                do_run "lz4 -d $backup| rbd import --image-format 2 - $pool_name/$name_import"
+
+                #create initial snap name
+                local timestamp_snap; timestamp_snap=$(basename "$backup" | awk '{print substr($1,1,12)}')
+                local snap_name_restore="$snap_name_prefix$timestamp_snap"
+                do_run "rbd snap create $pool_name/$name_import@$snap_name_restore"
             else
                 #differential
                 log info "Differential $backup"

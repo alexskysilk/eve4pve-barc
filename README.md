@@ -30,7 +30,7 @@ Usage:
     eve4pve-barc version
 
     eve4pve-barc create   --vmid=<string> --label=<string> --path=<string> --keep=<integer>
-                          --script=<string> --mail=<string> --unprotect-snap --syslog
+                          --script=<string> --mail=<string> --unprotect-snap --syslog --compress
     eve4pve-barc destroy  --vmid=<string> --label=<string> --path=<string>
     eve4pve-barc enable   --vmid=<string> --label=<string> --path=<string>
     eve4pve-barc disable  --vmid=<string> --label=<string> --path=<string>
@@ -68,6 +68,7 @@ Options:
     --keep               Specify the number of backup which should will keep, Default 1
     --script             Use specified hook script
                          Es. /usr/share/doc/eve4pve-barc/examples/script-hook.sh
+	--compress			 compress image using lz4 (lz4 utilities must be installed)					 
     --syslog             Write messages into the system log
     --mail               Email addresses send log backup, comma separated (es. info@domain.ltd,info1@domain.ltd)
     --unprotect-snap     Disable protection snapshot, default is protected.
