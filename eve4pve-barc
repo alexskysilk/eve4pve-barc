@@ -177,7 +177,7 @@ function parse_opts(){
     args=$(getopt \
            --options '' \
            --longoptions=path:,vmid:,label:,keep:,mail: \
-           --longoptions=script:,syslog,debug,dry-run,unprotect-snap \
+           --longoptions=script:,syslog,debug,dry-run,unprotect-snap,compress \
            --name "$PROGNAME" \
            -- "$@") \
            || end_process 128
@@ -192,6 +192,7 @@ function parse_opts(){
         --path) opt_path_backup="$2"; shift 2;;
         --script) opt_script="$2"; shift 2;;
         --syslog) opt_syslog=1; shift;;
+		--compress) opt_compress=1; shift;;
         --debug) opt_debug=1; shift;;
         --dry-run) opt_dry_run=1; shift;;
         --unprotect-snap) opt_unprotect_snap=1; shift;;
@@ -584,13 +585,19 @@ function backup(){
             backup_file=${export_backup_file[$i]};
             latest_snap=${export_latest_snap[$i]};
             type=${export_type[$i]};
-
-            if [ "$type" == "image" ]; then
+			dest_args=""
+			if [[ opt_compress -eq 1 ]]; then
+					if [[ -z $(which lz4) ]]; then log error "--compress called but lz4 compressor is not installed!"; exit 1; fi
+					dest_args=" - | lz4 - "
+					backup_file="$backup_file.lz4"
+			fi
+            
+			if [ "$type" == "image" ]; then
                 #export initial
                 call_hook_script "export-pre" "$current_snap" "$backup_file"
 
                 log info "VM $vm_id - Export initial '$backup_file'"
-                if ! do_run "rbd export --rbd-concurrent-management-ops 20 $current_snap '$backup_file'"; then
+                if ! do_run "rbd export --rbd-concurrent-management-ops 20 $current_snap $dest_args '$backup_file'"; then
                     remove_snaphot "$current_snap" 0
 
                     call_hook_script "export-abort" "$current_snap" "$backup_file"
@@ -609,7 +616,7 @@ function backup(){
                 call_hook_script "export-diff-pre" "$current_snap" "$backup_file"
 
                 log info "VM $vm_id - Export diff '$backup_file'"
-                if ! do_run "rbd export-diff --from-snap $latest_snap $current_snap '$backup_file'"; then
+                if ! do_run "rbd export-diff --from-snap $latest_snap $current_snap $dest_args '$backup_file'"; then
                     remove_snaphot "$current_snap" 0
 
                     call_hook_script "export-diff-abort" "$current_snap" "$backup_file"
