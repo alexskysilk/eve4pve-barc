@@ -62,7 +62,7 @@ Usage:
  
     $PROGNAME create   --vmid=<string> --label=<string> --path=<string> --keep=<integer>
                           --script=<string> --mail=<string> --unprotect-snap --syslog
-						  --compress
+                          --compress
     $PROGNAME destroy  --vmid=<string> --label=<string> --path=<string> 
     $PROGNAME enable   --vmid=<string> --label=<string> --path=<string> 
     $PROGNAME disable  --vmid=<string> --label=<string> --path=<string> 
@@ -70,13 +70,13 @@ Usage:
     $PROGNAME backup   --vmid=<string> --label=<string> --path=<string> --keep=<integer>
                           --script=<string> --mail=<string> --unprotect-snap --syslog 
     $PROGNAME restore  --vmid=<string> --label=<string> --path=<string>
-                          --script=<string> --syslog 
+                          --script=<string> --syslog --tmpdir=<string>
 
     $PROGNAME status   --vmid=<string> --label=<string> --path=<string>   
     $PROGNAME clean    --vmid=<string> --label=<string> --path=<string> --keep=<integer>
     $PROGNAME reset    --vmid=<string> --label=<string>   
     $PROGNAME assemble --vmid=<string> --label=<string> --path=<string>
-                          --script=<string> 
+                          --script=<string> --tmpdir=<string>
 Commands:
     version              Show version program
     help                 Show help program
@@ -103,6 +103,7 @@ Options:
     --syslog             Write messages into the system log
 	--compress			 Compress backup image using lz4 (package liblz4-tool must be installed)
     --mail               Email addresses send log backup, comma separated (es. info@domain.ltd,info1@domain.ltd)
+	--tmpdir			 location for temporary decompressed files (for differential restore/assemble)
     --unprotect-snap     Disable protection snapshot, default is protected.
                          In Proxmox VE 'protected snapshot' cause problem in remove VM/CT see documentation.
 
@@ -179,7 +180,7 @@ function parse_opts(){
     args=$(getopt \
            --options '' \
            --longoptions=path:,vmid:,label:,keep:,mail: \
-           --longoptions=script:,syslog,debug,dry-run,unprotect-snap,compress \
+           --longoptions=script:,syslog,debug,dry-run,unprotect-snap,compress,tmpdir: \
            --name "$PROGNAME" \
            -- "$@") \
            || end_process 128
@@ -195,6 +196,7 @@ function parse_opts(){
         --script) opt_script="$2"; shift 2;;
         --syslog) opt_syslog=1; shift;;
 		--compress) opt_compress=1; shift;;
+		--tmpdir) opt_tmpdir="$2"; shift 2;;
         --debug) opt_debug=1; shift;;
         --dry-run) opt_dry_run=1; shift;;
         --unprotect-snap) opt_unprotect_snap=1; shift;;
@@ -236,7 +238,12 @@ function parse_opts(){
         #comma separated
         vm_ids=$(echo "$opt_vm_ids" | tr ',' '\n')
     fi
-
+	# check if tmpdir was specified. if not, set to same as backup path
+	if [ -z "$opt_tmpdir" ]; then opt_tmpdir="$opt_path_backup"; fi
+	opt_tmpdir="$opt_tmpdir/tmp"
+	if ! mkdir -p "$opt_tmpdir"; then 
+		log info "tmpdir is not valid/cannot be created."; end_process 1; }
+	fi
     [ -z "$opt_label" ] && { log info "Label is not set correctly"; end_process 1; }
     [ "$opt_keep" -le 0 ] && { log info "Keep is not set correctly. Value > 0."; end_process 1; }
 
@@ -506,7 +513,7 @@ function backup(){
             export_type[$export_idx]=""
 
             #check exist initial export
-            if ! exist_file "$path_backup/*$suffix_backup_file$EXT_IMAGE"; then
+            if ! exist_file "$path_backup/*$suffix_backup_file$EXT_IMAGE*"; then
                 #initial export not exist            
                 backup_file="$backup_file$EXT_IMAGE"
                 
@@ -671,7 +678,7 @@ function get_size_file(){
 function merge_diff_backup(){
     #loop all image
     local image=''
-    for image in $path_backup/*$EXT_IMAGE; do
+    for image in $path_backup/*$EXT_IMAGE*; do
         image=$(basename "$image")
        
         local suffix_backup_file=${image:12}        
@@ -683,10 +690,15 @@ function merge_diff_backup(){
 
         #loop diff
         local export_diff=''
-        for export_diff in $(ls -r "$path_backup/"*$suffix_backup_file$EXT_DIFF 2>/dev/null); do
-            if [ "$index" -ge "$opt_keep" ]; then            
+        for export_diff in $(ls -r "$path_backup/"*$suffix_backup_file$EXT_DIFF* 2>/dev/null); do
+            # Decompress fraction if compressed
+			if [[ "$export_diff" = *".lz4"* ]]; then
+				lz4 -d "$export-diff" "$opt_tmpdir"
+				export_diff="$(echo "$export_diff" | sed 's/.lz4//' | sed 's/"$path_backup"/"$opt_tmpdir"/')"
+			fi
+			if [ "$index" -ge "$opt_keep" ]; then
                 if [ -z "$second_diff" ]; then
-                    second_diff="$export_diff"
+                    second_diff="$export_diff"				
                 else
                     first_diff="$export_diff"
                     merged_diff="$second_diff-merged"
@@ -726,6 +738,7 @@ function merge_diff_backup(){
 
             let index++
         done
+		rm -rf "$opt_tmpdir"
     done
 }
 
